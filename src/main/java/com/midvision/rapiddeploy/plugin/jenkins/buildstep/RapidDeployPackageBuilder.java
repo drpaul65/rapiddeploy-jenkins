@@ -9,9 +9,10 @@ import hudson.tasks.BuildStepDescriptor;
 import hudson.tasks.BuildStepMonitor;
 import hudson.tasks.Builder;
 import hudson.util.FormValidation;
-import hudson.util.ComboBoxModel ;
+import hudson.util.ListBoxModel;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
 import javax.servlet.ServletException;
@@ -21,41 +22,85 @@ import org.apache.commons.logging.LogFactory;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.QueryParameter;
 
-import com.midvision.rapiddeploy.plugin.jenkins.RapidDeployConnector;
+import com.midvision.rapiddeploy.connector.RapidDeployConnector;
 
 public class RapidDeployPackageBuilder extends Builder {
 
 	private final String serverUrl;
 	private final String authenticationToken;
-	private final String project;	
+	private final String project;
 	private final boolean enableCustomPackageName;
 	private final String packageName;
-	private final String archiveExension;
-	public static final Log logger = LogFactory.getLog(RapidDeployPackageBuilder.class);
-	
+	private final String archiveExtension;
+
+	private static final Log logger = LogFactory.getLog(RapidDeployPackageBuilder.class);
 
 	@DataBoundConstructor
-	public RapidDeployPackageBuilder(String serverUrl, String authenticationToken,
-			String project, boolean enableCustomPackageName, String packageName, String archiveExension) {
+	public RapidDeployPackageBuilder(String serverUrl, String authenticationToken, String project, boolean enableCustomPackageName, String packageName,
+			String archiveExtension) {
 		super();
 		this.serverUrl = serverUrl;
 		this.authenticationToken = authenticationToken;
 		this.project = project;
 		this.enableCustomPackageName = enableCustomPackageName;
-		this.packageName = packageName;		
-		this.archiveExension = archiveExension;
+		this.packageName = packageName;
+		this.archiveExtension = archiveExtension;
 	}
 
 	@Override
-	public boolean perform(AbstractBuild<?, ?> build, Launcher launcher,BuildListener listener) {			
-
-		listener.getLogger().println("Invoking RapidDeploy package builder via path: " + serverUrl);		
-		try {						
-			String output = RapidDeployConnector.invokeRapidDeployBuildPackage(getAuthenticationToken(), getServerUrl(), getProject(), getPackageName(), getArchiveExension());
-			listener.getLogger().println("Package build successfully requested!");
-				
-			return true;			
-			
+	public boolean perform(AbstractBuild<?, ?> build, Launcher launcher, BuildListener listener) {
+		listener.getLogger().println("Invoking RapidDeploy deployment package builder...");
+		listener.getLogger().println("  > Server URL: " + serverUrl);
+		listener.getLogger().println("  > Project: " + project);
+		listener.getLogger().println("  > Package name: " + packageName);
+		listener.getLogger().println("  > Archive extension: " + archiveExtension);
+		listener.getLogger().println();
+		try {
+			String output = RapidDeployConnector.invokeRapidDeployBuildPackage(getAuthenticationToken(), getServerUrl(), getProject(), getPackageName(),
+					getArchiveExtension(), false, true);
+			boolean success = true;
+			final String jobId = RapidDeployConnector.extractJobId(output);
+			if (jobId != null) {
+				listener.getLogger().println("Checking job status every 30 seconds...");
+				boolean runningJob = true;
+				long milisToSleep = 30000L;
+				while (runningJob) {
+					Thread.sleep(milisToSleep);
+					final String jobDetails = RapidDeployConnector.pollRapidDeployJobDetails(authenticationToken, serverUrl, jobId);
+					final String jobStatus = RapidDeployConnector.extractJobStatus(jobDetails);
+					listener.getLogger().println("Job status: " + jobStatus);
+					if ((jobStatus.equals("DEPLOYING")) || (jobStatus.equals("QUEUED")) || (jobStatus.equals("STARTING")) || (jobStatus.equals("EXECUTING"))) {
+						listener.getLogger().println("Job running, next check in 30 seconds...");
+						milisToSleep = 30000L;
+					} else if ((jobStatus.equals("REQUESTED")) || (jobStatus.equals("REQUESTED_SCHEDULED"))) {
+						listener.getLogger().println(
+								"Job in a REQUESTED state. Approval may be required in RapidDeploy "
+										+ "to continue with the execution, next check in 30 seconds...");
+					} else if (jobStatus.equals("SCHEDULED")) {
+						listener.getLogger().println("Job in a SCHEDULED state, the execution will start in a future date, next check in 5 minutes...");
+						listener.getLogger().println("Printing out job details: ");
+						listener.getLogger().println(jobDetails);
+						milisToSleep = 300000L;
+					} else {
+						runningJob = false;
+						listener.getLogger().println("Job finished with status: " + jobStatus);
+						if ((jobStatus.equals("FAILED")) || (jobStatus.equals("REJECTED")) || (jobStatus.equals("CANCELLED"))
+								|| (jobStatus.equals("UNEXECUTABLE")) || (jobStatus.equals("TIMEDOUT")) || (jobStatus.equals("UNKNOWN"))) {
+							success = false;
+						}
+					}
+				}
+			} else {
+				throw new RuntimeException("Could not retrieve job id, running asynchronously!");
+			}
+			final String logs = RapidDeployConnector.pollRapidDeployJobLog(authenticationToken, serverUrl, jobId);
+			if (!success) {
+				throw new RuntimeException("RapidDeploy job failed. Please check the output." + System.getProperty("line.separator") + logs);
+			}
+			listener.getLogger().println("RapidDeploy job successfully run. Please check the output.");
+			listener.getLogger().println();
+			listener.getLogger().println(logs);
+			return true;
 		} catch (Exception e) {
 			listener.getLogger().println("Call failed with error: " + e.getMessage());
 			return false;
@@ -79,148 +124,180 @@ public class RapidDeployPackageBuilder extends Builder {
 	}
 
 	public String getPackageName() {
-		if(enableCustomPackageName){
+		if (enableCustomPackageName) {
 			return packageName;
-		} else{
+		} else {
 			return "";
 		}
 	}
-	
-	public String getArchiveExension(){
-		return archiveExension;
+
+	public String getArchiveExtension() {
+		return archiveExtension;
 	}
 
-	@Override
-	public BuildStepDescriptor getDescriptor() {
-		return (DescriptorImpl) super.getDescriptor();
-	}
-
-	/**
-	 * Descriptor for {@link RapidDeployPackageBuilder}. Used as a singleton. The
-	 * class is marked as public so that it can be accessed from views.
-	 */		
-
-	
 	public BuildStepMonitor getRequiredMonitorService() {
-		// run anyway
 		return BuildStepMonitor.NONE;
 	}
 
+	/**
+	 * Descriptor for {@link RapidDeployPackageBuilder}. Used as a singleton.
+	 * The class is marked as public so that it can be accessed from views.
+	 */
 	@Extension
-	public static final class DescriptorImpl extends
-			BuildStepDescriptor<Builder> {
-		
+	public static final class DescriptorImpl extends BuildStepDescriptor<Builder> {
+
+		final private static String NOT_EMPTY_MESSAGE = "Please set a value for this field!";
+		final private static String NO_PROTOCOL_MESSAGE = "Please specify a protocol for the URL, e.g. \"http://\".";
+		final private static String CONNECTION_BAD_MESSAGE = "Unable to establish connection.";
+		final private static String WRONG_PROJECT_MESSAGE = "Wrong project selected, please reload the projects list.";
+
+		private List<String> projects;
+		private boolean newConnection = true;
+
 		public DescriptorImpl() {
 			super(RapidDeployPackageBuilder.class);
 			load();
 		}
 
-		// check serverurl field
-		public FormValidation doCheckServerUrl(@QueryParameter String value)
-				throws IOException, ServletException {
-			return checkNotEmpty(value);
-		}
-
-		// check authenticationToken field
-		public FormValidation doCheckAuthenticationToken(
-				@QueryParameter String value) throws IOException,
-				ServletException {
-			return checkNotEmpty(value);
-		}
-						
-		public FormValidation doGetPackages(@QueryParameter("serverUrl") final String serverUrl, @QueryParameter("authenticationToken") final String authenticationToken, @QueryParameter("project") final String project) throws IOException, ServletException {
-		    try {
-		    	String packageList = "";
-		    	if(serverUrl != null && !"".equals(serverUrl) && authenticationToken != null && !"".equals(authenticationToken) && project != null && !"".equals(project)){
-					List<String> packageNames;
-					try {								
-						packageNames = RapidDeployConnector.invokeRapidDeployListPackages(authenticationToken, serverUrl, project);
-						if(packageNames != null && packageNames.size()>0){
-							packageList = "<table>";
-							int index = 0;
-							int limit = 10;
-							for(String packageName : packageNames){
-								if(!"null".equals(packageName)){
-									packageList += "<tr><td class=\"setting-main\">";
-									packageList += packageName;
-									packageList += "</td></tr>";
-									index++;
-									if(index >= limit){
-										break;
-									}
-								}							
-							}
-							packageList += "</table>";
-						} else{
-							packageList = "No deployment packages exist";
-						}
-					} catch (Exception e) {					
-						e.printStackTrace();
-					}				
-				}
-		    	
-		        return FormValidation.okWithMarkup(packageList);
-		    } catch (Exception e) {
-		        return FormValidation.error("Client error : "+e.getMessage());
-		    }
-		}
-
+		@SuppressWarnings("rawtypes")
+		@Override
 		public boolean isApplicable(Class<? extends AbstractProject> aClass) {
 			// Indicates that this builder can be used with all kinds of project
 			// types
 			return true;
 		}
 
-//		@Override
-//		public boolean configure(StaplerRequest req, JSONObject json)
-//				throws FormException {
-//						
-//			save();
-//			return super.configure(req, json);
-//		}
-
 		/**
 		 * This human readable name is used in the configuration screen.
 		 */
+		@Override
 		public String getDisplayName() {
-			return "RapidDeploy package build";
+			return "RapidDeploy deployment package build";
 		}
 
-		public FormValidation checkNotEmpty(String value) {
+		/** SERVER URL FIELD **/
+
+		public FormValidation doCheckServerUrl(@QueryParameter String value) throws IOException, ServletException {
+			logger.debug("doCheckServerUrl");
+			newConnection = true;
 			if (value.length() == 0) {
-				return FormValidation
-						.error("Please set a value for this field!");
+				return FormValidation.error(NOT_EMPTY_MESSAGE);
+			} else if (!value.startsWith("http://") && !value.startsWith("https://")) {
+				return FormValidation.warning(NO_PROTOCOL_MESSAGE);
 			}
 			return FormValidation.ok();
 		}
 
-		public ComboBoxModel  doFillProjectItems(@QueryParameter("serverUrl") final String serverUrl, @QueryParameter("authenticationToken") final String authenticationToken) {
-			ComboBoxModel  items = new ComboBoxModel ();
-			if(serverUrl != null && !"".equals(serverUrl) && authenticationToken != null && !"".equals(authenticationToken)){
-				List<String> projects;
-				try {
-					projects = RapidDeployConnector.invokeRapidDeployListProjects(authenticationToken, serverUrl);
-					for(String projectName : projects){
-						items.add(projectName);
-					}
-				} catch (Exception e) {					
-					e.printStackTrace();
-				}				
-			}			
-			return items;
+		/** AUTHENTICATION TOKEN FIELD **/
+
+		public FormValidation doCheckAuthenticationToken(@QueryParameter String value) throws IOException, ServletException {
+			logger.debug("doCheckAuthenticationToken");
+			newConnection = true;
+			if (value.length() == 0) {
+				return FormValidation.error(NOT_EMPTY_MESSAGE);
+			}
+			return FormValidation.ok();
 		}
-						
-		
-		public ComboBoxModel  doFillArchiveExensionItems() {
-			ComboBoxModel  items = new ComboBoxModel ();
-			items.add("jar");
-			items.add("war");
-			items.add("ear");			
-			items.add("tar");
-			items.add("rar");
-			items.add("zip");			
+
+		/** LOAD PROJECTS BUTTON **/
+
+		public FormValidation doLoadProjects(@QueryParameter("serverUrl") final String serverUrl,
+				@QueryParameter("authenticationToken") final String authenticationToken) throws IOException, ServletException {
+			logger.debug("doLoadProjects");
+			newConnection = true;
+			if (getProjects(serverUrl, authenticationToken).isEmpty()) {
+				return FormValidation.error(CONNECTION_BAD_MESSAGE);
+			}
+			return FormValidation.ok();
+		}
+
+		/** PROJECT FIELD **/
+
+		public ListBoxModel doFillProjectItems(@QueryParameter("serverUrl") final String serverUrl,
+				@QueryParameter("authenticationToken") final String authenticationToken) {
+			logger.debug("doFillProjectItems");
+			ListBoxModel items = new ListBoxModel();
+			for (String projectName : getProjects(serverUrl, authenticationToken)) {
+				items.add(projectName);
+			}
 			return items;
 		}
 
+		/** SHOW PACKAGES BUTTON **/
+
+		public FormValidation doGetPackages(@QueryParameter("serverUrl") final String serverUrl,
+				@QueryParameter("authenticationToken") final String authenticationToken, @QueryParameter("project") final String project) throws IOException,
+				ServletException {
+			logger.debug("doGetPackages");
+			if (getProjects(serverUrl, authenticationToken).contains(project)) {
+				List<String> packageNames = new ArrayList<String>();
+				try {
+					packageNames = RapidDeployConnector.invokeRapidDeployListPackages(authenticationToken, serverUrl, project);
+				} catch (Exception e) {
+					logger.warn(e.getMessage());
+				}
+				if (!packageNames.isEmpty()) {
+					String packageList = "<table>";
+					int index = 0;
+					int limit = 10;
+					for (String packageName : packageNames) {
+						if (!"null".equals(packageName) && !packageName.startsWith("Deployment")) {
+							packageList += "<tr><td class=\"setting-main\">";
+							packageList += packageName;
+							packageList += "</td></tr>";
+							index++;
+							if (index >= limit) {
+								break;
+							}
+						}
+					}
+					packageList += "</table>";
+					return FormValidation.okWithMarkup(packageList);
+				}
+			} else if (getProjects(serverUrl, authenticationToken).isEmpty()) {
+				return FormValidation.error(CONNECTION_BAD_MESSAGE);
+			} else {
+				return FormValidation.warning(WRONG_PROJECT_MESSAGE);
+			}
+			return FormValidation.warning("No deployment package could be retrieved for '" + project + "'.");
+		}
+
+		/** ARCHIVE EXTENSION FIELD **/
+
+		public ListBoxModel doFillArchiveExtensionItems() {
+			logger.debug("doFillArchiveExtensionItems");
+			ListBoxModel items = new ListBoxModel();
+			items.add("jar");
+			items.add("war");
+			items.add("ear");
+			items.add("tar");
+			items.add("rar");
+			items.add("zip");
+			return items;
+		}
+
+		/** AUX **/
+
+		/** Method to cache the projects to ease the form validation **/
+		private synchronized List<String> getProjects(final String serverUrl, final String authenticationToken) {
+			logger.debug("getProjects");
+			if (projects == null || projects.isEmpty() || newConnection) {
+				try {
+					if (serverUrl != null && !"".equals(serverUrl) && authenticationToken != null && !"".equals(authenticationToken)) {
+						logger.debug("REQUEST TO WEB SERVICE GET PROJECTS...");
+						projects = RapidDeployConnector.invokeRapidDeployListProjects(authenticationToken, serverUrl);
+						newConnection = false;
+						logger.debug("PROJECTS RETRIEVED: " + projects.size());
+					} else {
+						projects = new ArrayList<String>();
+					}
+				} catch (Exception e) {
+					logger.warn(e.getMessage());
+					projects = new ArrayList<String>();
+				}
+			}
+			logger.debug("PROJECTS: " + projects.size());
+			return projects;
+		}
 	}
 }

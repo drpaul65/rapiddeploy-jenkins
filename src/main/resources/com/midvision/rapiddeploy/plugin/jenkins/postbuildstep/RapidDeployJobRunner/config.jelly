@@ -1,36 +1,42 @@
-<j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form">
-  <!--
-    This jelly script is used for per-project configuration.
+<j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define"
+	xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form">
 
-    See global.jelly for a general discussion about jelly script.
-  -->
+	<j:set var="id" value="${h.generateId()}" />
 
-  <!--
-    Creates a text field that shows the value of the "name" property.
-    When submitted, it will be passed to the corresponding constructor parameter.
-  -->
-  <f:entry title="RapidDeploy server url" field="serverUrl">
-    <f:textbox />
-  </f:entry>
-    
-  <f:entry title="RapidDeploy authentication token" field="authenticationToken">
-    <f:password />
-  </f:entry>
-            
-  <f:entry id="project" title="Project" name="project" field="project">  
-  	<f:combobox/>
-  </f:entry>
-    
-  <f:entry title="Environment" name="Environment" field="environment">  
-  	<f:combobox/>
-  </f:entry>
-   
-  <f:entry title="Deployment package name" field="packageName">
-    <f:combobox />
-  </f:entry>  
-  
-  <f:entry title="Asynchronous job" field="asynchronousJob">
-    <f:checkbox />
-  </f:entry> 
-  
+	<f:entry title="RapidDeploy server URL" field="serverUrl">
+		<f:textbox />
+	</f:entry>
+
+	<f:entry title="RapidDeploy authentication token" field="authenticationToken">
+		<f:password />
+	</f:entry>
+
+	<f:entry>
+		<div style="float:right">
+			<input type="button" value="Load projects" class="yui-button validate-button"
+				onclick="validateButton('${descriptor.descriptorFullUrl}/loadProjects','serverUrl,authenticationToken',this); updateListBox('${id}','${descriptor.descriptorFullUrl}/fillProjectItems')" />
+		</div>
+		<div style="display:none;">
+			<img src="${imagesURL}/spinner.gif" />
+			Loading projects...
+		</div>
+		<div></div>
+	</f:entry>
+
+	<f:entry title="Project" field="project">
+		<f:select id="${id}" />
+	</f:entry>
+
+	<f:entry title="Environment" field="environment">
+		<f:select />
+	</f:entry>
+
+	<f:entry title="Deployment package name" field="packageName">
+		<f:combobox />
+	</f:entry>
+
+	<f:entry title="Asynchronous job" field="asynchronousJob">
+		<f:checkbox />
+	</f:entry>
+
 </j:jelly>

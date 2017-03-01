@@ -13,29 +13,25 @@
 
 	<f:entry>
 		<div style="float:right">
-			<input type="button" value="Load projects" class="yui-button validate-button"
-				onclick="validateButton('${descriptor.descriptorFullUrl}/loadProjects','serverUrl,authenticationToken',this); updateListBox('${id}','${descriptor.descriptorFullUrl}/fillProjectItems')" />
+			<input type="button" value="Load job plans" class="yui-button validate-button"
+				onclick="validateButton('${descriptor.descriptorFullUrl}/loadJobPlans','serverUrl,authenticationToken',this); updateListBox('${id}','${descriptor.descriptorFullUrl}/fillJobPlanItems')" />
 		</div>
 		<div style="display:none;">
 			<img src="${imagesURL}/spinner.gif" />
-			Loading projects...
+			Loading job plans...
 		</div>
 		<div></div>
 	</f:entry>
 
-	<f:entry title="Project" field="project">
+	<f:entry title="Job Plan" field="jobPlan">
 		<f:select id="${id}" />
 	</f:entry>
 
-	<f:entry title="Environment" field="environment">
-		<f:select />
-	</f:entry>
-
-	<f:entry title="Deployment package name" field="packageName">
-		<f:combobox />
-	</f:entry>
-
 	<f:entry title="Asynchronous job" field="asynchronousJob">
+		<f:checkbox />
+	</f:entry>
+
+	<f:entry title="Show Full Logs" field="showFullLogs">
 		<f:checkbox />
 	</f:entry>
 
